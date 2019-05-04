@@ -16,8 +16,6 @@
 
 #include <stdio.h>
 
-#include <cublas_v2.h>
-
 #define CHECK_BANK_CONFLICTS 0
 #if CHECK_BANK_CONFLICTS
 #define AS(i, j) CUT_BANK_CHECKER(((float*)&As[0][0]), (BLOCK_SIZE * i + j))
@@ -26,7 +24,6 @@
 #define AS(i, j) As[i][j]
 #define BS(i, j) Bs[i][j]
 #endif
-
 
 
 //#define LAYER2_DEBUG 
@@ -108,15 +105,6 @@ __global__ void executepoolingCuda(float *Layer2_Neurons_GPU,float *Layer2_pool_
 }
 __global__ void execute3DconvolutionCuda(float *bias,float *Layer2_Neurons_GPU, float *Layer2_Weights_GPU,float *Layer3_Neurons_GPU,int out,int fr,int fc,int stride_width,int kernel,int pad,int in_output,int group)
 {
-
-     //------ Create a handle for CUBLAS-------//
-    cublasHandle_t handle;
-    cublasCreate(&handle);
-    int define POOL2_FMAP = 13*13;
-    int L2_OUT = 256;
-    float Layer3_Neurons_GPU_temp[L2_OUT*POOL2_FMAP] = 0; 
-    //---------------------------------------//
-
     float product = 0.0;
     int x_pad = 0, y_pad = 0, loopc = 0,loopr = 0;
     int stride = 0,colstride = 0;
@@ -150,54 +138,26 @@ __global__ void execute3DconvolutionCuda(float *bias,float *Layer2_Neurons_GPU, 
     /* take care of padding in bottom of image */
     if(row >= fr - pad)
         loopr =  fr + pad - row;
-
-    //------------------Cublas-----------------//
-    float alf = 1;
-    float bet = 0;
-    float *alpha = &alf;
-    float *beta = &bet;
-    int m = in_output;
-    int n = loopr;
-    int k = loopc
-    int lda=m, ldb=k, ldc=m;
-    cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, m, n, k, alpha, Layer2_Weights_GPU, lda, Layer2_Weights_GPU, ldb, beta, Layer3_Neurons_GPU_temp, ldc);
-
-    //Not sure//
-    for(int i =0; , i < L2_OUT*POOL2_FMAP; i++)
-    {
-        Layer3_Neurons_GPU[i] += bias[output];
-        if(Layer3_Neurons_GPU[i] < 0){ Layer3_Neurons_GPU[i] = 0; }
-        Layer3_Neurons_GPU[i] = Layer3_Neurons_GPU_temp[i];
-    }
-    //---------------------------------------//
-
-    /*
     for(int feature =0; feature < in_output ; feature++) // calculate the feature maps
     {
         for(int i =0; i < loopr ; i++) // kernel convolution
         {
             for(int j =0; j < loopc ; j++) // kernel convolution
             {
-
-
                 product += ( Layer2_Neurons_GPU[feature*fr*fc + i*fc + j + stride + colstride] * Layer2_Weights_GPU[output*kernel*kernel*in_output + feature*kernel*kernel + i*kernel + j + kernel*x_pad + y_pad]);
             }
         }
     }
-    
     product += bias[output];
-    if(product < 0) product = 0;
+    if(product < 0) /* ReLU Layer */
+        product = 0;
     Layer3_Neurons_GPU[output*fr*fc + row*fc + col] = product;
     product = 0.0;
     if(col >= pad)
         stride+=stride_width;
-
-
-    */
 }
 __global__ void execute3Dconvolutiongroup2Cuda(float *bias,float *Layer2_Neurons_GPU, float *Layer2_Weights_GPU,float *Layer3_Neurons_GPU,int out,int fr,int fc,int stride_width,int kernel,int pad,int in_output,int group)
 {
-
     float product = 0.0;
     int x_pad = 0, y_pad = 0, loopc = 0,loopr = 0;
     int stride = 0,colstride = 0;
@@ -238,7 +198,6 @@ __global__ void execute3Dconvolutiongroup2Cuda(float *bias,float *Layer2_Neurons
         {
             for(int j =0; j < loopc ; j++) // kernel convolution
             {
-         
                 product += (( Layer2_Neurons_GPU[feature*fr*fc + i*fc + j + stride + colstride] * Layer2_Weights_GPU[output*kernel*kernel*in_output + (feature-in_output)*kernel*kernel + i*kernel + j + kernel*x_pad + y_pad]));
             }
         }
@@ -304,6 +263,29 @@ __global__ void executeFCLayer(float *bias,float *Layer_InNeurons_GPU,float *Lay
         product = 0.0;
     }
 }
+
+//--------------------------New Function -------------------------------------------//
+__global__ void executeFCLayer7(float *bias,float *Layer_InNeurons_GPU,float *Layer_Weights_GPU,float *Layer_OutNeurons_GPU,int output, int input,bool reLU,bool dropout,float *d_weight)
+{
+    float product = 0.0;
+    int out = blockIdx.x;
+    //int weight = d_weight[out];
+    //for(int in = 0; in < input; in++)
+    //{
+    //    product += Layer_InNeurons_GPU[in] * Layer_Weights_GPU[weight+in];
+    //}
+    product += Layer_Weights_GPU[out];
+    if(reLU == true)
+    {
+            if(product < 0) /* ReLU Layer */
+                product = 0;
+    }
+
+    Layer_OutNeurons_GPU[out] = product;
+    product = 0.0;
+}
+//--------------------------New Function -------------------------------------------//
+
 __global__ void executeThirdLayer(float *Layer3_Neurons_GPU, float *Layer3_Weights_GPU,float *Layer4_Neurons_GPU)
 {
     int blockID=blockIdx.x;
@@ -603,8 +585,9 @@ void executelrnNorm(float *Layer_InNeurons_GPU, float alpha, float beta,int loca
 }
 void executeFCLayer(float *bias,float *Layer_InNeurons_GPU,float *Layer_Weights_GPU,float *Layer_OutNeurons_GPU,int output, int input,bool reLU,bool dropout)
 {
-        printf("Execute FC Layer of output : %d input %d\n",output,input);
-        float product = 0.0,max = 0.0; int weight = 0,index = 0;
+    printf("Execute FC Layer of output : %d input %d\n",output,input);
+    float product = 0.0,max = 0.0; 
+    int weight = 0,index = 0;
 	for(int out=0; out < output ; out++)
 	{
 		for(int in = 0; in < input; in++)
