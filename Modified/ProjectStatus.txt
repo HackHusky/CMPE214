@@ -1,9 +1,12 @@
-In Progress 	__global__ void executeFirstLayer()              
-Unfinish 	__global__ void executepoolingCuda()               
-Debug	 	__global__ void execute3DconvolutionCuda()
+SharedMem	__global__ void executeFirstLayer()              
+None	 	__global__ void executepoolingCuda()               
+???	 	__global__ void execute3DconvolutionCuda()
 Unfinish  	__global__ void execute3Dconvolutiongroup2Cuda()
 Unfinish	__global__ void executelrnNormCuda_split()
 Unfinish 	__global__ void executelrnNormCuda()
-Unfinish 	__global__ void executeThirdLayer()
-Unfinish	__global__ void executeFourthLayer()
-Done 		__global__ void executeFCLayer()
+Cublas 		__global__ void executeFCLayer()
+
+RunTime
+Original : 113ms
+Modified : 89ms 
+18% improvement
