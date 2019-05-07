@@ -209,6 +209,9 @@ void NeuralNetwork()
 	else                                                                     
 		cudaSetDevice(dev);
 #endif  
+	cudaEvent_t start, stop;
+	cudaEventCreate(&start);
+	cudaEventCreate(&stop);
         /* Read Input File 227*227*3 */	
 	float *Layer1_Neurons_CPU = (float*) malloc (INPUT_SIZE * sizeof(float));
 	readIn(Layer1_Neurons_CPU);
@@ -276,6 +279,7 @@ void NeuralNetwork()
 	float *fc9_Neurons_CPU = (float *)malloc(sizeof(float) * (1000));
 	executeFCLayer(bias_8,fc8_Neurons_CPU,Layer8_Weights_CPU,fc9_Neurons_CPU,1000,4096,false,false);
 #else
+	cudaEventRecord(start);
     /*Layer1 */
     // Layer1 Neurons -> Layer1_norm -> Layer1_pool -> Layer2_Neurons-> 
 	float *Layer1_bias_GPU,*Layer1_Weights_GPU,*Layer1_Neurons_GPU,*Layer1_Norm_GPU,*Layer1_pool_GPU,*Layer2_Neurons_GPU;
@@ -450,6 +454,11 @@ void NeuralNetwork()
 	float *fc9_Neurons_CPU = (float *)malloc(sizeof(float) * (1000));
 	cudaMemcpy(fc9_Neurons_CPU,Layer9_Neurons_GPU, sizeof(float)*(1000), cudaMemcpyDeviceToHost);
 	/* Check the output */
+	cudaEventRecord(stop);
+	cudaEventSynchronize(stop);
+	float milliseconds = 0;
+	cudaEventElapsedTime(&milliseconds, start, stop);
+	printf("Time %f \n",milliseconds );
 	float max = 0.0;int index = 0; 
 	for(int i =0; i < 1000; i++)
 	{

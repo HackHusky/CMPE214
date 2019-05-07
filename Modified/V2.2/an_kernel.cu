@@ -264,28 +264,6 @@ __global__ void executeFCLayer(float *bias,float *Layer_InNeurons_GPU,float *Lay
     }
 }
 
-//--------------------------New Function -------------------------------------------//
-__global__ void executeFCLayer7(float *bias,float *Layer_InNeurons_GPU,float *Layer_Weights_GPU,float *Layer_OutNeurons_GPU,int output, int input,bool reLU,bool dropout,float *d_weight)
-{
-    float product = 0.0;
-    int out = blockIdx.x;
-    //int weight = d_weight[out];
-    //for(int in = 0; in < input; in++)
-    //{
-    //    product += Layer_InNeurons_GPU[in] * Layer_Weights_GPU[weight+in];
-    //}
-    product += Layer_Weights_GPU[out];
-    if(reLU == true)
-    {
-            if(product < 0) /* ReLU Layer */
-                product = 0;
-    }
-
-    Layer_OutNeurons_GPU[out] = product;
-    product = 0.0;
-}
-//--------------------------New Function -------------------------------------------//
-
 __global__ void executeThirdLayer(float *Layer3_Neurons_GPU, float *Layer3_Weights_GPU,float *Layer4_Neurons_GPU)
 {
     int blockID=blockIdx.x;
@@ -334,6 +312,19 @@ __global__ void executeFourthLayer(float *Layer4_Neurons_GPU,float *Layer4_Weigh
 
     Layer5_Neurons_GPU[blockID+(10*blockIdx.y)]=result;
 }
+
+//--------------------------New Function -------------------------------------------//
+__global__ void executeFCLayerCublas(float *bias,float *Layer_OutNeurons_GPU, bool reLU)
+{
+    int out = blockIdx.x;
+    Layer_OutNeurons_GPU[out] += bias[out];
+    if (reLU == true)
+    {
+        if (Layer_OutNeurons_GPU[out] < 0) /* ReLU Layer */
+            Layer_OutNeurons_GPU[out] = 0;
+    }
+}
+//--------------------------New Function -------------------------------------------//
 #else
 void executeFirstLayer(float *bias,float *Layer1_Neurons_GPU,float *Layer1_Weights_GPU,float *Layer2_Neurons_GPU,int stride_width,int col_width,int feature_r,int feature_c,int out)
 {

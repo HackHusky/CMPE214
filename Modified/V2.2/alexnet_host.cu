@@ -112,15 +112,6 @@ void extract_weights(const char *pFileName,float *layer_weights,bool bias)
 
 }
 
-
-void vector_init(float *a, int n)
-{
-    for (int i = 0; i < 4096; i++) 
-    {
-        a[i] = n;
-    }
-}
-
 int main(int argc, char** argv)
 {
 	int i, commandline_error;
@@ -220,6 +211,20 @@ void NeuralNetwork()
 	else                                                                     
 		cudaSetDevice(dev);
 #endif  
+
+	/*Initialize cublas handler*/
+	 // Create and initialize a new context
+    cublasHandle_t handle;
+    cublasCreate_v2(&handle);
+    float alpha = 1.0f;
+	float beta = 0.0f;
+
+    //---------------------------------------------------------//
+
+    cudaEvent_t start, stop;
+	cudaEventCreate(&start);
+	cudaEventCreate(&stop);
+
         /* Read Input File 227*227*3 */	
 	float *Layer1_Neurons_CPU = (float*) malloc (INPUT_SIZE * sizeof(float));
 	readIn(Layer1_Neurons_CPU);
@@ -287,6 +292,12 @@ void NeuralNetwork()
 	float *fc9_Neurons_CPU = (float *)malloc(sizeof(float) * (1000));
 	executeFCLayer(bias_8,fc8_Neurons_CPU,Layer8_Weights_CPU,fc9_Neurons_CPU,1000,4096,false,false);
 #else
+
+
+	printf("Time Start\n");
+
+	cudaEventRecord(start);
+
     /*Layer1 */
     // Layer1 Neurons -> Layer1_norm -> Layer1_pool -> Layer2_Neurons-> 
 	float *Layer1_bias_GPU,*Layer1_Weights_GPU,*Layer1_Neurons_GPU,*Layer1_Norm_GPU,*Layer1_pool_GPU,*Layer2_Neurons_GPU;
@@ -419,11 +430,17 @@ void NeuralNetwork()
 	cudaMemcpy(Layer6_Weights_GPU,Layer6_Weights_CPU, sizeof(float)*4096*256*6*6, cudaMemcpyHostToDevice);
 	cudaMemcpy(Layer6_bias_GPU,bias_6, sizeof(float)*4096,cudaMemcpyHostToDevice);
 
+	/*Cublas*/
+	//4096x9216 * 9216x1 = 4096x1
+	cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, 1, 4096, 9216, &alpha, Layer6_Neurons_GPU, 1, Layer6_Weights_GPU, 9216, &beta, Layer7_Neurons_GPU, 1);
 	dim3 Layer6_Block(4096,1,1);
 	dim3 Layer6_Thread(1,1);   // combi tried 10*10*10
-	executeFCLayer<<<Layer6_Block,Layer6_Thread>>>(Layer6_bias_GPU,Layer6_Neurons_GPU,Layer6_Weights_GPU,Layer7_Neurons_GPU,4096,(256*6*6),true,false);
-	// RELU LAyer 
+	//executeFCLayer<<<Layer6_Block,Layer6_Thread>>>(Layer6_bias_GPU,Layer6_Neurons_GPU,Layer6_Weights_GPU,Layer7_Neurons_GPU,4096,(256*6*6),true,false);
+	executeFCLayerCublas<<<Layer6_Block,Layer6_Thread>>>(Layer6_bias_GPU,Layer7_Neurons_GPU,true); //Layer7_Weights_GPU == product
+	/*Cublas*/
 
+
+	// RELU LAyer 
 	/* Seventh Layer Fully connected + ReLU */	
 	float *Layer7_bias_GPU; 
 	float *Layer7_Weights_GPU;
@@ -436,44 +453,13 @@ void NeuralNetwork()
 	/* Memcpy of weights and bias */ 
 	cudaMemcpy(Layer7_Weights_GPU,Layer7_Weights_CPU, sizeof(float)*4096*4096, cudaMemcpyHostToDevice);
 	cudaMemcpy(Layer7_bias_GPU,bias_7, sizeof(float)*4096,cudaMemcpyHostToDevice);
-
+	
+	/*Cublas*/
+	cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, 1, 4096, 4096, &alpha, Layer7_Neurons_GPU, 1, Layer7_Weights_GPU, 4096, &beta, Layer8_Neurons_GPU, 1);
 	dim3 Layer7_Block(4096,1,1);
 	dim3 Layer7_Thread(1,1);   // combi tried 10*10*10
-	//--------------------------cudablas-------------------------------//
-    printf("CUBLAS TEST\n");
-
-    // Create and initialize a new context
-    cublasHandle_t handle;
-    cublasCreate_v2(&handle);
-    //weight vector setup
-    size_t bytes = 4096 * sizeof(float);
-    float *h_weight,*h_scale;
-    float *d_weight,*d_scale;
-    h_weight = (float*)malloc(bytes); 
-    h_scale  = (float*)malloc(bytes);
-    cudaMalloc(&d_weight, bytes);
-    cudaMalloc(&d_scale, bytes);
-    vector_init(h_weight, 0);
-    vector_init(h_scale, 4096);
-    cublasSetVector(4096, sizeof(float), h_weight, 1, d_weight, 1);
-    cublasSetVector(4096, sizeof(float), h_scale, 1, d_scale, 1);
-    // Launch simple saxpy kernel (single precision a * x + y)
-    // Function signature: handle, # elements n, A, increment, B, increment
-    const float scale = 4096.0f;
-    const float scale2 = 1.0f;
-    cublasSaxpy(handle, 4096, &scale, d_scale, 1, d_weight, 1);
-    // Copy the result vector back out
-    cublasGetVector(4096, sizeof(float), d_weight, 1, h_weight, 1);
-	
-    for(int i=0;i<4096;i++)
-    {
-        int weight = h_weight[i];
-        cublasSaxpy(handle, 4096, &scale2, Layer7_Neurons_GPU, 1, Layer7_Weights_GPU+weight, 1); //check this again
-
-    }
-	//--------------------------cudablas-------------------------------//
-
-	executeFCLayer7<<<Layer7_Block,Layer7_Thread>>>(Layer7_bias_GPU,Layer7_Neurons_GPU,Layer7_Weights_GPU,Layer8_Neurons_GPU,4096,4096,true,false,d_weight); //Layer7_Weights_GPU == product
+	executeFCLayerCublas<<<Layer7_Block,Layer7_Thread>>>(Layer7_bias_GPU,Layer8_Neurons_GPU,true); //Layer7_Weights_GPU == product
+	/*Cublas*/
 
 	/* Eigth Layer Fully connected + ReLU */	
 	float *Layer8_bias_GPU; 
@@ -487,13 +473,26 @@ void NeuralNetwork()
 	/* Memcpy of weights and bias */ 
 	cudaMemcpy(Layer8_Weights_GPU,Layer8_Weights_CPU, sizeof(float)*4096*1000, cudaMemcpyHostToDevice);
 	cudaMemcpy(Layer8_bias_GPU,bias_8, sizeof(float)*1000,cudaMemcpyHostToDevice);
-
+	
+	/*Cublas*/
+	//1000x4096 * 4096x1 = 1000x1 
+	cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, 1, 1000, 4096, &alpha, Layer8_Neurons_GPU, 1, Layer8_Weights_GPU, 4096, &beta, Layer9_Neurons_GPU, 1);
 	dim3 Layer8_Block(1000,1,1);
 	dim3 Layer8_Thread(1,1);   // combi tried 10*10*10
-	executeFCLayer<<<Layer8_Block,Layer8_Thread>>>(Layer8_bias_GPU,Layer8_Neurons_GPU,Layer8_Weights_GPU,Layer9_Neurons_GPU,1000,4096,false,false);
+	//executeFCLayer<<<Layer8_Block,Layer8_Thread>>>(Layer8_bias_GPU,Layer8_Neurons_GPU,Layer8_Weights_GPU,Layer9_Neurons_GPU,1000,4096,false,false);
+	executeFCLayerCublas<<<Layer8_Block,Layer8_Thread>>>(Layer8_bias_GPU,Layer9_Neurons_GPU,true); //Layer7_Weights_GPU == product
+	/*Cublas*/
+
 
 	float *fc9_Neurons_CPU = (float *)malloc(sizeof(float) * (1000));
 	cudaMemcpy(fc9_Neurons_CPU,Layer9_Neurons_GPU, sizeof(float)*(1000), cudaMemcpyDeviceToHost);
+	
+	cudaEventRecord(stop);
+	float milliseconds = 0;
+	cudaEventSynchronize(stop);
+	cudaEventElapsedTime(&milliseconds, start, stop);
+	printf("Time Stop \n Time %f \n", milliseconds );
+
 	/* Check the output */
 	float max = 0.0;int index = 0; 
 	for(int i =0; i < 1000; i++)
@@ -544,11 +543,6 @@ void NeuralNetwork()
     free(Layer6_Weights_CPU);
     free(Layer7_Weights_CPU);
     free(Layer8_Weights_CPU);
-    //------------new stuff---------------//
-    cudaFree(d_weight);
-    cudaFree(d_scale);
-    free(h_weight);
-    free(h_scale);
 #endif
 	/* SoftMax */
 	//Confirm the functionality of SoftMax ,extract_weights("data/fc8_out.txt",fc9_Neurons_CPU,false);
